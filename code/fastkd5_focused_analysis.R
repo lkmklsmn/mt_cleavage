@@ -44,11 +44,6 @@ genelist <- genelist[genelist$chromosome_name %in% chrs,]
 genelist$chromosome_name <- factor(genelist$chromosome_name, levels = chrs)
 
 
-# Load mutation data ####
-mut <- fread("/Users/lukas/Downloads/OmicsSomaticMutations.csv", sep = ",")
-mut_orig <- mut
-
-
 # Load FASTK knockout data ####
 files <- list.files(
   "/Users/lukas/OneDrive/Documents/GitHub/mt_cleavage/data/mt_cleavage_GSE156260/", full.names = T)
@@ -104,67 +99,6 @@ subm <- data.frame(
   start_ko = means[["KD5 -/-"]],
   start_wt = means[["WT +/+"]]
 )
-
-means <- lapply(asplit, function(x)
-  rowMeans(end_rate_ko[, x], na.rm = T))
-subm$end_ko <- means[["KD5 -/-"]]
-subm$end_wt <- means[["WT +/+"]]
-
-means <- lapply(asplit, function(x)
-  rowMeans(coverage_ko[, x], na.rm = T))
-subm$cov_ko <- means[["KD5 -/-"]]
-subm$cov_wt <- means[["WT +/+"]]
-
-ggplot(subm[subm$cov_ko > 100 & subm$cov_wt > 100,], 
-       aes(pos, start_ko - start_wt)) +
-  labs(
-    title = "Start rate difference",
-    y = "KD5 - WT",
-    x = "Position on chrM"
-  ) +
-  geom_point() +
-  theme_classic() + xlim(9100, 9400)
-
-ggplot(subm[subm$cov_ko > 100 & subm$cov_wt > 100,], 
-       aes(pos, end_ko - end_wt)) +
-  labs(
-    title = "End rate difference",
-    y = "KD5 - WT",
-    x = "Position on chrM"
-  ) +
-  geom_point() +
-  theme_classic() + xlim(9100, 9400)
-  
-
-# Junction based calculation ####
-junctions <- unique(anno$V5)
-tmp <- do.call(rbind, lapply(junctions, function(x)
-  c(
-    mean(subm$end_ko[(x - 10):x]) - mean(subm$end_wt[(x - 10):x]),
-    mean(subm$start_ko[x:(x + 10)]) - mean(subm$start_wt[x:(x + 10)]))))
-tmp <- data.frame(
-  start = tmp[,2],
-  end = tmp[,1],
-  junction = junctions,
-  id = paste(anno$genes[1:(nrow(anno))], 
-             c(anno$genes[2:(nrow(anno))], "end"), 
-             sep = "|"))
-
-ggplot(tmp, aes(start, end)) +
-  geom_hline(yintercept = 0, linetype = 2) +
-  geom_vline(xintercept = 0, linetype = 2) +
-  geom_point() +
-  ggrepel::geom_text_repel(aes(label = id)) +
-  theme_classic()
-
-
-tmp <- reshape2::melt(subm, measure.vars = c("start_ko", "start_wt"))
-tmp <- reshape2::melt(subm, measure.vars = c("end_ko", "end_wt"))
-ggplot(tmp[tmp$pos > 7400 & tmp$pos < 7500,],
-       aes(pos, value, color = variable)) +
-  geom_point() + theme_classic() +
-  labs(title = "Start rate", y = "Rate", x = "Position on chrM")
-
 
 # Single base calculation ####
 res_start <- do.call(rbind, lapply(1:nrow(start_rate_ko), function(x){
@@ -261,7 +195,7 @@ ggplot(meta, aes(genotype, cleave)) +
   theme_classic()
 
 
-# Check DepMap ####
+# Load DepMap cleavage data ####
 path <- "/Users/lukas/OneDrive/Documents/GitHub/mt_cleavage/data/mt_cleavage_depmap/"
 files <- list.files(path)
 files <- files[grep("cleavage", files)]
@@ -292,6 +226,7 @@ subm <- data.frame(
   start = colMeans(start_rate[junc:(junc + 10), ]),
   end = colMeans(end_rate[(junc - 10):junc, ]))
 subm$id <- sra$DepMap_ID[match(rownames(subm), rownames(sra))]
+subm$score <- subm$start + subm$end
 
 ok <- intersect(subm$id, rownames(cnv))
 correl <- cor(
@@ -300,7 +235,6 @@ correl <- cor(
   use = 'pairwise.complete')[,1]
 
 subm$cnv <- cnv[match(subm$id, rownames(cnv)), "FASTKD5"]
-subm$score <- subm$start + subm$end
 
 ggplot(subm, aes(cnv, start + end)) +
   labs(
@@ -331,6 +265,7 @@ mut <- fread("/Users/lukas/Downloads/OmicsSomaticMutations.csv", sep = ",")
 mut <- mut[mut$HugoSymbol == "FASTKD5",]
 
 mut$score <- (subm$start + subm$end)[match(mut$ModelID, subm$id)]
+mut$lineage <- sample_info$lineage[match(mut$ModelID, sample_info$DepMap_ID)]
 
 mut$pos <- gsub("p.", "", fixed = T, mut$ProteinChange)
 mut$pos <- unlist(lapply(mut$pos, function(x)
@@ -353,8 +288,21 @@ ggplot(mut, aes(score, ProteinChange)) +
     linetype = 2, color = "green") +
   theme_classic()
 
-
 subm$group <- subm$id %in% mut$ModelID
+subm$lineage <- sample_info$lineage[match(subm$id, sample_info$DepMap_ID)]
+good_tissue <- names(which(table(subm$lineage[subm$group]) >= 2))
+
+ggplot(subm[subm$lineage %in% good_tissue, ], 
+       aes(group, end + start)) +
+  facet_wrap(~ lineage, nrow = 1) +
+  labs(
+    title = "DepMap",
+    y = "ATP6-COX3 cleavage"
+  ) +
+  geom_boxplot(outlier.colour = NA) +
+  geom_jitter(width = 0.1) +
+  theme_classic()
+
 ggplot(subm, aes(interaction(group, cnv < 0.8), end + start)) +
   labs(
     title = "DepMap",
@@ -374,6 +322,20 @@ ggplot(subm, aes(start + end, protein)) +
   geom_boxplot() +
   theme_classic()
  
+good_tissue <- names(which(table(subm$lineage[subm$cnv < 0.8]) >= 5))
+
+ggplot(subm[subm$lineage %in% good_tissue, ], 
+       aes(cnv < 0.8, end + start)) +
+  facet_wrap(~ lineage, nrow = 1) +
+  labs(
+    title = "DepMap",
+    y = "ATP6-COX3 cleavage"
+  ) +
+  geom_boxplot(outlier.colour = NA) +
+  geom_jitter(width = 0.1) +
+  theme_classic()
+
+
 
 # Plot KO & DepMap ####
 plt_both <- function(junc){
@@ -382,14 +344,10 @@ plt_both <- function(junc){
     end = colMeans(end_rate[(junc - 10):junc, ]))
   subm$id <- sra$DepMap_ID[match(rownames(subm), rownames(sra))]
   
-  ok <- intersect(subm$id, rownames(cnv))
-  correl <- cor(
-    cnv[ok,], 
-    subm[match(ok,subm$id), "start"] - subm[match(ok,subm$id), "end"], 
-    use = 'pairwise.complete')[,1]
-  
-  subm$cnv <- cnv[match(subm$id, rownames(cnv)), "FASTKD5"]
   subm$score <- subm$start + subm$end
+  
+  ok <- intersect(subm$id, rownames(cnv))
+  subm$cnv <- cnv[match(subm$id, rownames(cnv)), "FASTKD5"]
   
   p_depmap <- ggplot(subm[!is.na(subm$cnv), ],
                      aes(cnv < 0.8, score)) +
@@ -464,3 +422,74 @@ plot_manhattan <- function(junc){
 plot_manhattan(5904)
 plot_manhattan(9207)
 plot_manhattan(14747)
+
+
+# Correlate w dependencies ####
+dep <- demeter2
+
+plt_volcano <- function(dep, junc){
+  subm <- data.frame(
+    start = colMeans(start_rate[junc:(junc + 10), ]),
+    end = colMeans(end_rate[(junc - 10):junc, ]))
+  subm$id <- sra$DepMap_ID[match(rownames(subm), rownames(sra))]
+  subm$score <- subm$start + subm$end
+  
+  ok <- intersect(subm$id, rownames(dep))
+  correl <- t(apply(dep[ok,], 2, function(x){
+    summary(lm(x ~ subm$score[match(ok,subm$id)]))$coefficients[2, c(1, 4)]
+  }))
+  correl <- data.frame(
+    gene = colnames(dep),
+    coef = correl[, 1],
+    pval = correl[, 2]
+  )
+  correl <- correl[sort.list(correl$pval), ]
+  
+  ggplot(correl, aes(coef, -log10(pval))) +
+    labs(
+      title = "DepMap",
+      subtitle = "Association with dependency",
+      y = "-log10(p-value)",
+      x = "Coefficient"
+    ) +
+    geom_point() +
+    ggrepel::geom_text_repel(
+      data = correl[1:20,],
+      aes(label = gene),
+      color = "red"
+    ) +
+    theme_classic()
+}
+plt_volcano(dep = demeter2, junc = 9207)
+plt_volcano(dep = demeter2, junc = 5904)
+plt_volcano(dep = demeter2, junc = 14747)
+
+plt_volcano(dep = kronos, junc = 9207)
+plt_volcano(dep = kronos, junc = 5904)
+plt_volcano(dep = kronos, junc = 14747)
+
+plt_gene <- function(dep, gene, junc){
+  subm <- data.frame(
+    start = colMeans(start_rate[junc:(junc + 10), ]),
+    end = colMeans(end_rate[(junc - 10):junc, ]))
+  subm$id <- sra$DepMap_ID[match(rownames(subm), rownames(sra))]
+  subm$score <- subm$start + subm$end
+  
+  subm$dep <- dep[match(subm$id, rownames(dep)), gene]
+  ggplot(subm, aes(score, dep)) +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    labs(
+      title = gene,
+      x = "Cleavage",
+      y = paste(gene, "dependency")
+    ) +
+    ggpubr::stat_cor() +
+    theme_classic()  
+}
+plt_gene(dep = kronos, gene = "FASTKD5", junc = 9207)
+plt_gene(dep = demeter2, gene = "PCNA", junc = 5904)
+plt_gene(dep = demeter2, gene = "SNRPB", junc = 5904)
+
+
+
