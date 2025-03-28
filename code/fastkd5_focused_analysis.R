@@ -491,5 +491,3 @@ plt_gene(dep = kronos, gene = "FASTKD5", junc = 9207)
 plt_gene(dep = demeter2, gene = "PCNA", junc = 5904)
 plt_gene(dep = demeter2, gene = "SNRPB", junc = 5904)
 
-
-
