@@ -1,6 +1,7 @@
 # Load R libs ####
 library(biomaRt)
 library(data.table)
+library(fgsea)
 library(ggplot2)
 library(limma)
 library(pheatmap)
@@ -49,6 +50,7 @@ files <- list.files(
   "/Users/lukas/OneDrive/Documents/GitHub/mt_cleavage/data/mt_cleavage_GSE156260/", full.names = T)
 files <- files[-grep("_NR_", files, fixed = T)]
 files <- files[-grep("_R_", files, fixed = T)]
+files <- files[-grep("_endtoend_", files, fixed = T)]
 
 dat <- lapply(files, read.delim)
 names(dat) <- gsub("_1_preprocessed_cleavage.tsv", "", fixed = T, basename(files))
@@ -140,8 +142,9 @@ res$end_score <- -log10(res$end.2)
 res$end_score[which(res$end.1 < 0)] <- (-1)*res$end_score[which(res$end.1 < 0)]
 
 tmp <- reshape2::melt(res, measure.vars = c("start_score", "end_score"))
+standard <- tmp
 
-ggplot(tmp, aes(pos, value, color = value)) +
+ggplot(standard, aes(pos, value, color = value)) +
   labs(
     y = "KD5 vs WT",
     x = "Position on chrM"
@@ -152,7 +155,7 @@ ggplot(tmp, aes(pos, value, color = value)) +
   scale_color_gradient2(low = "blue", mid = "grey", high = "red") +
   theme_classic()
 
-ggplot(tmp, aes(pos, value, color = value)) +
+ggplot(standard, aes(pos, value, color = value)) +
   labs(
     y = "KD5 vs WT",
     x = "Position on chrM"
@@ -162,9 +165,9 @@ ggplot(tmp, aes(pos, value, color = value)) +
   geom_point(aes(alpha = abs(value))) + 
   scale_color_gradient2(low = "blue", mid = "grey", high = "red") +
   theme_classic() +
-  xlim(5850, 6050)
+  xlim(5904 - 50, 5904 + 50)
 
-ggplot(tmp, aes(pos, value, color = value)) +
+ggplot(standard, aes(pos, value, color = value)) +
   labs(
     y = "KD5 vs WT",
     x = "Position on chrM"
@@ -174,7 +177,19 @@ ggplot(tmp, aes(pos, value, color = value)) +
   geom_point(aes(alpha = abs(value))) + 
   scale_color_gradient2(low = "blue", mid = "grey", high = "red") +
   theme_classic() +
-  xlim(14600, 14900)
+  xlim(9207 - 50, 9207 + 50)
+
+ggplot(standard, aes(pos, value, color = value)) +
+  labs(
+    y = "KD5 vs WT",
+    x = "Position on chrM"
+  ) +
+  facet_wrap(~variable, nrow = 2) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(aes(alpha = abs(value))) + 
+  scale_color_gradient2(low = "blue", mid = "grey", high = "red") +
+  theme_classic() +
+  xlim(14747 - 50, 14747 + 50)
 
 p_anno
 
@@ -259,6 +274,92 @@ ggplot(tmp, aes(pos, value, color = value)) +
   scale_color_gradient2(low = "blue", mid = "grey", high = "red") +
   theme_classic() +
   xlim(14600, 14900)
+
+
+# Run this for endtoend data ####
+files <- list.files(
+  "/Users/lukas/OneDrive/Documents/GitHub/mt_cleavage/data/mt_cleavage_GSE156260/", full.names = T)
+files <- files[grep("endtoend", files, fixed = T)]
+
+dat <- lapply(files, read.delim)
+names(dat) <- gsub("_1_preprocessed_endtoend_cleavage.tsv", "", fixed = T, basename(files))
+
+meta <- read.csv(
+  "/Users/lukas/OneDrive/Documents/GitHub/mt_cleavage/data/GSE156260_info.txt")
+meta <- meta[match(names(dat), meta$Run), ]
+rownames(meta) <- meta$Run
+
+asplit <- split(meta$Run, meta$genotype)
+
+start_rate_ko <- do.call(cbind, lapply(dat, function(x)
+  x$num_of_starts/x$total_num_reads))
+end_rate_ko <- do.call(cbind, lapply(dat, function(x)
+  x$num_of_ends/x$total_num_reads))
+
+coverage_ko <- do.call(cbind, lapply(dat, function(x) x$total_num_reads))
+starts_ko <- do.call(cbind, lapply(dat, function(x) x$num_of_starts))
+ends_ko <- do.call(cbind, lapply(dat, function(x) x$num_of_ends))
+
+res_start <- do.call(rbind, lapply(1:nrow(start_rate_ko), function(x){
+  pval <- try(t.test(
+    start_rate_ko[x, asplit[["KD5 -/-"]]],
+    start_rate_ko[x, asplit[["WT +/+"]]])$p.value)
+  if(class(pval) == "try-error") pval <- NA
+  
+  diff <- mean(start_rate_ko[x, asplit[["KD5 -/-"]]]) - 
+    mean(start_rate_ko[x, asplit[["WT +/+"]]])
+  
+  c(diff, pval)
+}))
+
+res_end <- do.call(rbind, lapply(1:nrow(start_rate_ko), function(x){
+  pval <- try(t.test(
+    end_rate_ko[x, asplit[["KD5 -/-"]]],
+    end_rate_ko[x, asplit[["WT +/+"]]])$p.value)
+  if(class(pval) == "try-error") pval <- NA
+  
+  diff <- mean(end_rate_ko[x, asplit[["KD5 -/-"]]]) - 
+    mean(end_rate_ko[x, asplit[["WT +/+"]]])
+  
+  c(diff, pval)
+}))
+
+res <- data.frame(
+  pos = 1:nrow(start_rate_ko),
+  start = res_start, end = res_end
+)
+res$start_score <- -log10(res$start.2)
+res$start_score[which(res$start.1 < 0)] <- (-1)*res$start_score[which(res$start.1 < 0)]
+
+res$end_score <- -log10(res$end.2)
+res$end_score[which(res$end.1 < 0)] <- (-1)*res$end_score[which(res$end.1 < 0)]
+
+tmp <- reshape2::melt(res, measure.vars = c("start_score", "end_score"))
+endtoend <- tmp
+
+ggplot(endtoend, aes(pos, value, color = value)) +
+  labs(
+    y = "KD5 vs WT",
+    x = "Position on chrM"
+  ) +
+  facet_wrap(~variable, nrow = 2) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(aes(alpha = abs(value))) + 
+  scale_color_gradient2(low = "blue", mid = "grey", high = "red") +
+  theme_classic() +
+  xlim(9207-25, 9207+25)
+
+ggplot(standard, aes(pos, value, color = value)) +
+  labs(
+    y = "KD5 vs WT",
+    x = "Position on chrM"
+  ) +
+  facet_wrap(~variable, nrow = 2) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(aes(alpha = abs(value))) + 
+  scale_color_gradient2(low = "blue", mid = "grey", high = "red") +
+  theme_classic() +
+  xlim(9207-25, 9207+25)
 
 
 # Load DepMap cleavage data ####
@@ -490,6 +591,35 @@ plot_manhattan(9207)
 plot_manhattan(14747)
 
 
+# Correlate Cox1 junction with ATP6-COX3 ####
+junc <- 5904
+subm <- data.frame(
+  start = colMeans(start_rate[junc:(junc + 10), ]),
+  end = colMeans(end_rate[(junc - 10):junc, ]))
+subm$id <- sra$DepMap_ID[match(rownames(subm), rownames(sra))]
+cox1_score <- subm$start + subm$end
+
+junc <- 9207
+subm <- data.frame(
+  start = colMeans(start_rate[junc:(junc + 10), ]),
+  end = colMeans(end_rate[(junc - 10):junc, ]))
+subm$id <- sra$DepMap_ID[match(rownames(subm), rownames(sra))]
+atp6cox3_score <- subm$start + subm$end
+
+aframe <- data.frame(
+  id = subm$id,
+  atp6cox3_score, cox1_score)
+ggplot(aframe, aes(atp6cox3_score, cox1_score)) +
+  labs(
+    title = "DepMap",
+    x = "ATP6-COX3 cleavage",
+    y = "COX1 cleavage"
+  ) +
+  geom_point() +
+  ggpubr::stat_cor() +
+  theme_classic()
+
+
 # Correlate w dependencies ####
 dep <- demeter2
 
@@ -556,4 +686,32 @@ plt_gene <- function(dep, gene, junc){
 plt_gene(dep = kronos, gene = "FASTKD5", junc = 9207)
 plt_gene(dep = demeter2, gene = "PCNA", junc = 5904)
 plt_gene(dep = demeter2, gene = "SNRPB", junc = 5904)
+
+
+# Check enrichment ####
+junc <- 9207
+subm <- data.frame(
+  start = colMeans(start_rate[junc:(junc + 10), ]),
+  end = colMeans(end_rate[(junc - 10):junc, ]))
+subm$id <- sra$DepMap_ID[match(rownames(subm), rownames(sra))]
+subm$score <- subm$start + subm$end
+
+ok <- intersect(subm$id, rownames(dep))
+correl <- t(apply(dep[ok,], 2, function(x){
+  summary(lm(x ~ subm$score[match(ok,subm$id)]))$coefficients[2, c(1, 4)]
+}))
+correl <- data.frame(
+  gene = colnames(dep),
+  coef = correl[, 1],
+  pval = correl[, 2]
+)
+correl <- correl[sort.list(correl$pval), ]
+
+paths <- gmtPathways(
+  "/Users/lukas/OneDrive/Miko/UTHealth/projects/Marian/data/hallmark.gmt")
+ranks <- correl$coef
+names(ranks) <- correl$gene
+enrich <- fgsea(
+  pathways = paths, stats = ranks)
+
 
